@@ -17,6 +17,7 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
 import android.view.WindowManager
+import android.view.WindowInsets
 import android.widget.ImageView
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
@@ -72,6 +73,7 @@ class BatteryMonitorService : Service() {
 
     private var overlayView: ImageView? = null
     private var currentConnectedLevel: Int = -1
+    private var isStatusBarVisible: Boolean = true
 
     private val profileListener = object : BluetoothProfile.ServiceListener {
         override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
@@ -457,11 +459,30 @@ class BatteryMonitorService : Service() {
                 val iv = ImageView(this).apply {
                     scaleType = ImageView.ScaleType.FIT_CENTER
                     setImageBitmap(bitmap)
+                    alpha = if (isStatusBarVisible) 1f else 0f
+                    setOnApplyWindowInsetsListener { view, insets ->
+                        val visible = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            insets.isVisible(WindowInsets.Type.statusBars())
+                        } else {
+                            @Suppress("DEPRECATION")
+                            insets.systemWindowInsetTop > 0
+                        }
+                        if (isStatusBarVisible != visible) {
+                            isStatusBarVisible = visible
+                            view.animate()
+                                .alpha(if (visible) 1f else 0f)
+                                .setDuration(120L)
+                                .start()
+                        }
+                        insets
+                    }
                 }
                 wm.addView(iv, params)
+                iv.requestApplyInsets()
                 overlayView = iv
             } else {
                 overlayView?.setImageBitmap(bitmap)
+                overlayView?.alpha = if (isStatusBarVisible) 1f else 0f
                 wm.updateViewLayout(overlayView, params)
             }
         } catch (_: Exception) {
@@ -472,6 +493,7 @@ class BatteryMonitorService : Service() {
     private fun removeOverlayView() {
         val view = overlayView ?: return
         overlayView = null
+        isStatusBarVisible = true
         try {
             getSystemService(WindowManager::class.java)?.removeView(view)
         } catch (_: Exception) {
