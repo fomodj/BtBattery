@@ -5,6 +5,7 @@ import android.app.*
 import android.bluetooth.*
 import android.content.*
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.graphics.*
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
@@ -12,6 +13,10 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
+import android.view.Gravity
+import android.view.WindowManager
+import android.widget.ImageView
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -28,9 +33,16 @@ class BatteryMonitorService : Service() {
         const val ACTION_BATTERY_CHANGED = "android.bluetooth.device.action.BATTERY_LEVEL_CHANGED"
         const val EXTRA_BATTERY_LEVEL = "android.bluetooth.device.extra.BATTERY_LEVEL"
         const val ACTION_REFRESH = "com.example.btbattery.ACTION_REFRESH"
+        const val ACTION_UPDATE_OVERLAY = "com.example.btbattery.ACTION_UPDATE_OVERLAY"
         const val PREFS_NAME = "bt_battery_prefs"
         const val KEY_ICON_STYLE = "icon_style_v3"
         const val KEY_PINNED_ADDRESS = "pinned_device_address"
+
+        const val KEY_OVERLAY_ENABLED = "overlay_enabled"
+        const val KEY_OVERLAY_PREVIEW = "overlay_preview"
+        const val KEY_OVERLAY_X = "overlay_x_dp"
+        const val KEY_OVERLAY_Y = "overlay_y_dp"
+        const val KEY_OVERLAY_SIZE = "overlay_size_dp"
 
         const val STYLE_BADGE = 0
         const val STYLE_RING = 1
@@ -47,6 +59,9 @@ class BatteryMonitorService : Service() {
     private var activeGatt: BluetoothGatt? = null
     private var isForegroundStarted = false
     private var lastGattAttemptMs = 0L
+
+    private var overlayView: ImageView? = null
+    private var currentConnectedLevel: Int = -1
 
     private val profileListener = object : BluetoothProfile.ServiceListener {
         override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
@@ -104,7 +119,6 @@ class BatteryMonitorService : Service() {
         }
         ContextCompat.registerReceiver(this, btReceiver, mainFilter, ContextCompat.RECEIVER_EXPORTED)
 
-        // 单独注册 HFP 厂商扩展指令广播（解析 +IPHONEACCEV，适配奢音 X5 等第三方骨传导耳机）
         val vendorFilter = IntentFilter(BluetoothHeadset.ACTION_VENDOR_SPECIFIC_HEADSET_EVENT).apply {
             addCategory(BluetoothHeadset.VENDOR_SPECIFIC_HEADSET_EVENT_COMPANY_ID_CATEGORY + ".76")
         }
@@ -115,8 +129,17 @@ class BatteryMonitorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_UPDATE_OVERLAY) {
+            updateOverlayView()
+            return START_STICKY
+        }
         refreshAudioDeviceBattery()
         return START_STICKY
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        updateOverlayView()
     }
 
     private fun parseVendorBatteryEvent(intent: Intent) {
@@ -168,14 +191,12 @@ class BatteryMonitorService : Service() {
             return
         }
 
-        // 1. 汇总来自 HFP / A2DP / AudioManager / 反射 的所有已连接蓝牙设备
         val connectedMap = LinkedHashMap<String, BluetoothDevice>()
         try {
             headsetProxy?.connectedDevices?.forEach { connectedMap[it.address] = it }
             a2dpProxy?.connectedDevices?.forEach { connectedMap[it.address] = it }
         } catch (_: SecurityException) {}
 
-        // 2. 通过官方 AudioManager 捕获当前活动的蓝牙音频输出（兼容非标准 DeviceClass 的骨传导耳机）
         val activeAudioAddresses = HashSet<String>()
         val activeAudioNames = HashSet<String>()
         try {
@@ -206,7 +227,6 @@ class BatteryMonitorService : Service() {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val pinnedAddr = prefs.getString(KEY_PINNED_ADDRESS, "") ?: ""
 
-        // 构建 UI 设备列表（过滤掉手表手环，除非已被用户手动锁定）
         val pairedUiList = bonded
             .filter { dev -> !isLikelyWatchOrBand(dev) || dev.address.equals(pinnedAddr, ignoreCase = true) }
             .map { dev ->
@@ -221,7 +241,6 @@ class BatteryMonitorService : Service() {
             }
             .sortedWith(compareByDescending<PairedDeviceInfo> { it.connected }.thenByDescending { isPriorityHeadphone(it.name) })
 
-        // 筛选候选耳机
         val candidates = connectedMap.values.filter { dev ->
             if (pinnedAddr.isNotEmpty()) {
                 dev.address.equals(pinnedAddr, ignoreCase = true)
@@ -247,8 +266,8 @@ class BatteryMonitorService : Service() {
                 logBuilder.append(connectedMap.values.joinToString("、") { it.name ?: it.address })
                 logBuilder.append("\n")
             }
-            logBuilder.append("若奢音 X5 处于本地 MP3 游泳模式，蓝牙会暂时断开。")
-            updateUiAndIdle("未检测到已连接耳机", "连上耳机后通知栏自动显示", logBuilder.toString().trim(), pairedUiList)
+            logBuilder.append("若奢音 X5 处于本地 MP3 模式，蓝牙会暂时断开。")
+            updateUiAndIdle("未检测到已连接耳机", "连上耳机后顶部自动显示电量", logBuilder.toString().trim(), pairedUiList)
             return
         }
 
@@ -266,24 +285,28 @@ class BatteryMonitorService : Service() {
         }
 
         if (finalLevel in 0..100) {
+            currentConnectedLevel = finalLevel
             updateConnectedNotification(name, finalLevel)
+            updateOverlayView()
             BatteryStateHolder.update(
                 BatteryUiState(
                     serviceRunning = true,
                     deviceName = name,
-                    deviceSubtitle = "已连接 · 通知栏实时同步",
+                    deviceSubtitle = "已连接 · 顶部与通知栏同步中",
                     batteryLevel = finalLevel,
                     diagnosticLog = logBuilder.toString().trim(),
                     pairedDevices = pairedUiList
                 )
             )
         } else {
+            currentConnectedLevel = -1
             val now = System.currentTimeMillis()
             if (now - lastGattAttemptMs > 8000L) {
                 lastGattAttemptMs = now
                 tryReadGattBattery(target)
             }
             showIdleNotification("$name 已连接（获取电量中）")
+            updateOverlayView()
             BatteryStateHolder.update(
                 BatteryUiState(
                     serviceRunning = true,
@@ -304,7 +327,9 @@ class BatteryMonitorService : Service() {
     }
 
     private fun updateUiAndIdle(title: String, sub: String, log: String, list: List<PairedDeviceInfo>) {
+        currentConnectedLevel = -1
         showIdleNotification("等待耳机连接")
+        updateOverlayView()
         BatteryStateHolder.update(
             BatteryUiState(
                 serviceRunning = true,
@@ -315,6 +340,183 @@ class BatteryMonitorService : Service() {
                 pairedDevices = list
             )
         )
+    }
+
+    // 顶部状态栏动态悬浮贴片核心逻辑
+    private fun updateOverlayView() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val enabled = prefs.getBoolean(KEY_OVERLAY_ENABLED, true)
+        val preview = prefs.getBoolean(KEY_OVERLAY_PREVIEW, false)
+        val isPortrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+        val displayLevel = if (currentConnectedLevel in 0..100) currentConnectedLevel else if (preview) 70 else -1
+
+        if (!enabled || !Settings.canDrawOverlays(this) || !isPortrait || displayLevel !in 0..100) {
+            removeOverlayView()
+            return
+        }
+
+        val iconStyle = getIconStyle()
+        val xDp = prefs.getInt(KEY_OVERLAY_X, 64)
+        val yDp = prefs.getInt(KEY_OVERLAY_Y, 12)
+        val sizeDp = prefs.getInt(KEY_OVERLAY_SIZE, 20)
+
+        // 电池框宽高比略宽一点（1.35:1），视觉上与系统电池图标比例一致
+        val heightPx = dpToPx(sizeDp)
+        val widthPx = if (iconStyle == STYLE_BATTERY) (heightPx * 1.38f).toInt() else heightPx
+        val bitmap = createOverlayGraphic(displayLevel, iconStyle)
+
+        val params = WindowManager.LayoutParams(
+            widthPx,
+            heightPx,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = dpToPx(xDp)
+            y = dpToPx(yDp)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                fitInsetsTypes = 0
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+
+        val wm = getSystemService(WindowManager::class.java) ?: return
+        try {
+            if (overlayView == null) {
+                val iv = ImageView(this).apply {
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    setImageBitmap(bitmap)
+                }
+                wm.addView(iv, params)
+                overlayView = iv
+            } else {
+                overlayView?.setImageBitmap(bitmap)
+                wm.updateViewLayout(overlayView, params)
+            }
+        } catch (_: Exception) {
+            removeOverlayView()
+        }
+    }
+
+    private fun removeOverlayView() {
+        val view = overlayView ?: return
+        overlayView = null
+        try {
+            getSystemService(WindowManager::class.java)?.removeView(view)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density + 0.5f).toInt()
+
+    // 专供顶部状态栏渲染的高对比度矢量位图（浅色/深色壁纸均清晰可读）
+    private fun createOverlayGraphic(level: Int, iconStyle: Int): Bitmap {
+        val accent = getLevelColor(level)
+        val endColor = when {
+            level <= 20 -> Color.parseColor("#DC2626")
+            level <= 45 -> Color.parseColor("#D97706")
+            else -> Color.parseColor("#059669")
+        }
+        val text = level.toString()
+
+        return when (iconStyle) {
+            STYLE_BATTERY -> {
+                val w = 192
+                val h = 140
+                val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bitmap)
+
+                val bodyRect = RectF(4f, 12f, 170f, 128f)
+                val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    shader = LinearGradient(0f, 0f, w.toFloat(), h.toFloat(), accent, endColor, Shader.TileMode.CLAMP)
+                }
+                canvas.drawRoundRect(bodyRect, 28f, 28f, bgPaint)
+
+                // 右侧电池正极凸点
+                val tipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = endColor
+                    style = Paint.Style.FILL
+                }
+                canvas.drawRoundRect(RectF(174f, 44f, 188f, 96f), 8f, 8f, tipPaint)
+
+                val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.WHITE
+                    textAlign = Paint.Align.CENTER
+                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    textSize = if (level == 100) 64f else 80f
+                }
+                val fm = textPaint.fontMetrics
+                canvas.drawText(text, bodyRect.centerX(), bodyRect.centerY() - (fm.ascent + fm.descent) / 2f, textPaint)
+                bitmap
+            }
+
+            STYLE_RING -> {
+                val size = 144
+                val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bitmap)
+
+                // 深色半透明圆形底托，确保在亮色壁纸上依然锐利
+                val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb(185, 18, 22, 30)
+                    style = Paint.Style.FILL
+                }
+                canvas.drawCircle(size / 2f, size / 2f, size / 2f - 2f, bgPaint)
+
+                val pad = 14f
+                val oval = RectF(pad, pad, size - pad, size - pad)
+                val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb(75, 255, 255, 255)
+                    style = Paint.Style.STROKE
+                    strokeWidth = 14f
+                }
+                canvas.drawOval(oval, trackPaint)
+
+                val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = accent
+                    style = Paint.Style.STROKE
+                    strokeWidth = 14f
+                    strokeCap = Paint.Cap.ROUND
+                }
+                canvas.drawArc(oval, -90f, 360f * (level / 100f), false, arcPaint)
+
+                val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.WHITE
+                    textAlign = Paint.Align.CENTER
+                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    textSize = if (level == 100) 44f else 58f
+                }
+                val fm = textPaint.fontMetrics
+                canvas.drawText(text, size / 2f, size / 2f - (fm.ascent + fm.descent) / 2f, textPaint)
+                bitmap
+            }
+
+            else -> {
+                val size = 144
+                val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bitmap)
+                val badgeRect = RectF(4f, 4f, size - 4f, size - 4f)
+                val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    shader = LinearGradient(0f, 0f, size.toFloat(), size.toFloat(), accent, endColor, Shader.TileMode.CLAMP)
+                }
+                canvas.drawRoundRect(badgeRect, 36f, 36f, bgPaint)
+
+                val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.WHITE
+                    textAlign = Paint.Align.CENTER
+                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    textSize = if (level == 100) 58f else 76f
+                }
+                val fm = textPaint.fontMetrics
+                canvas.drawText(text, badgeRect.centerX(), badgeRect.centerY() - (fm.ascent + fm.descent) / 2f, textPaint)
+                bitmap
+            }
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -389,12 +591,11 @@ class BatteryMonitorService : Service() {
     }
 
     private fun getLevelColor(level: Int): Int = when {
-        level <= 20 -> Color.parseColor("#EF4444") // 珊瑚红
-        level <= 45 -> Color.parseColor("#F59E0B") // 琥珀黄
-        else -> Color.parseColor("#10B981")        // 翠绿
+        level <= 20 -> Color.parseColor("#EF4444")
+        level <= 45 -> Color.parseColor("#F59E0B")
+        else -> Color.parseColor("#10B981")
     }
 
-    // 1. 通知栏自定义卡片左侧：全彩高清动态图标
     private fun createCardGraphic(level: Int, iconStyle: Int): Bitmap {
         val size = 144
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -482,7 +683,6 @@ class BatteryMonitorService : Service() {
             }
 
             else -> {
-                // 圆角徽章：渐变高级底 + 纯白粗体数字
                 val badgeRect = RectF(6f, 6f, size - 6f, size - 6f)
                 val endColor = when {
                     level <= 20 -> Color.parseColor("#DC2626")
@@ -507,7 +707,6 @@ class BatteryMonitorService : Service() {
         return bitmap
     }
 
-    // 2. 待机态高清彩色圆角耳机图标（彻底消灭纯白方块）
     private fun createIdleCardGraphic(): Bitmap {
         val size = 144
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -539,7 +738,6 @@ class BatteryMonitorService : Service() {
         return bitmap
     }
 
-    // 3. 通知栏自定义圆角彩色进度条
     private fun createProgressBarBitmap(level: Int, accentColor: Int): Bitmap {
         val w = 480
         val h = 16
@@ -562,87 +760,6 @@ class BatteryMonitorService : Service() {
             canvas.drawRoundRect(RectF(0f, 0f, fillW, h.toFloat()), radius, radius, fillPaint)
         }
         return bitmap
-    }
-
-    // 4. 顶部状态栏纯白单色小图标（符合 Android Alpha 蒙版规范）
-    private fun createStatusBarIcon(level: Int, iconStyle: Int): IconCompat {
-        val size = 96
-        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        val text = level.toString()
-
-        when (iconStyle) {
-            STYLE_RING -> {
-                val oval = RectF(10f, 10f, 86f, 86f)
-                val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.argb(100, 255, 255, 255)
-                    style = Paint.Style.STROKE
-                    strokeWidth = 9f
-                }
-                canvas.drawOval(oval, trackPaint)
-
-                val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.WHITE
-                    style = Paint.Style.STROKE
-                    strokeWidth = 9f
-                    strokeCap = Paint.Cap.ROUND
-                }
-                canvas.drawArc(oval, -90f, 360f * (level / 100f), false, arcPaint)
-
-                val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.WHITE
-                    textAlign = Paint.Align.CENTER
-                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    textSize = if (level == 100) 28f else 38f
-                }
-                val fm = textPaint.fontMetrics
-                canvas.drawText(text, size / 2f, size / 2f - (fm.ascent + fm.descent) / 2f, textPaint)
-            }
-
-            STYLE_BATTERY -> {
-                val bodyRect = RectF(6f, 18f, 82f, 78f)
-                val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.WHITE
-                    style = Paint.Style.STROKE
-                    strokeWidth = 7f
-                }
-                canvas.drawRoundRect(bodyRect, 14f, 14f, strokePaint)
-
-                val tipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.WHITE
-                    style = Paint.Style.FILL
-                }
-                canvas.drawRoundRect(RectF(85f, 36f, 92f, 60f), 4f, 4f, tipPaint)
-
-                val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.WHITE
-                    textAlign = Paint.Align.CENTER
-                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    textSize = if (level == 100) 30f else 42f
-                }
-                val fm = textPaint.fontMetrics
-                canvas.drawText(text, bodyRect.centerX(), bodyRect.centerY() - (fm.ascent + fm.descent) / 2f, textPaint)
-            }
-
-            else -> {
-                val badgeRect = RectF(6f, 6f, 90f, 90f)
-                val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.WHITE
-                    style = Paint.Style.FILL
-                }
-                canvas.drawRoundRect(badgeRect, 22f, 22f, bgPaint)
-
-                val cutoutPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
-                    textAlign = Paint.Align.CENTER
-                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    textSize = if (level == 100) 36f else 50f
-                }
-                val fm = cutoutPaint.fontMetrics
-                canvas.drawText(text, badgeRect.centerX(), badgeRect.centerY() - (fm.ascent + fm.descent) / 2f, cutoutPaint)
-            }
-        }
-        return IconCompat.createWithBitmap(bitmap)
     }
 
     private fun contentIntent(): PendingIntent {
@@ -669,7 +786,7 @@ class BatteryMonitorService : Service() {
         }
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(createStatusBarIcon(level, iconStyle))
+            .setSmallIcon(IconCompat.createWithBitmap(cardBitmap))
             .setLargeIcon(cardBitmap)
             .setColor(accent)
             .setCustomContentView(views)
@@ -739,6 +856,7 @@ class BatteryMonitorService : Service() {
     }
 
     override fun onDestroy() {
+        removeOverlayView()
         try { unregisterReceiver(btReceiver) } catch (_: Exception) {}
         activeGatt?.close()
         val adapter = getSystemService(BluetoothManager::class.java)?.adapter

@@ -110,7 +110,7 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- 通知栏实时样式切换 -->
+        <!-- 顶部状态栏动态贴片（核心功能） -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -129,7 +129,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="通知栏卡片图标样式"
+                    android:text="顶部状态栏动态贴片"
                     android:textColor="@color/text_primary"
                     android:textSize="15sp"
                     android:textStyle="bold" />
@@ -138,9 +138,106 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
-                    android:text="自定义高清渲染，按电量变色，点击后通知栏即时刷新"
+                    android:text="绕过澎湃 OS 静态图标限制，在桌面/应用顶部直接显示动态样式（横屏自动隐藏）"
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnOverlayPerm"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="42dp"
+                    android:layout_marginTop="10dp"
+                    android:text="授予悬浮窗权限"
+                    app:cornerRadius="12dp" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/switchOverlay"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="开启顶部状态栏贴片"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/switchPreview"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="未连耳机时显示测试图标（方便对位）"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/tvOverlayX"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="水平位置 X：64 dp"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+
+                <SeekBar
+                    android:id="@+id/seekOverlayX"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="320" />
+
+                <TextView
+                    android:id="@+id/tvOverlayY"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="垂直位置 Y：12 dp"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+
+                <SeekBar
+                    android:id="@+id/seekOverlayY"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="56" />
+
+                <TextView
+                    android:id="@+id/tvOverlaySize"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="图标大小：20 dp"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+
+                <SeekBar
+                    android:id="@+id/seekOverlaySize"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:max="18" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 图标样式切换 -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            app:cardBackgroundColor="@color/bg_card"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="0dp"
+            app:strokeWidth="0dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="图标样式（顶部与通知栏同步）"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
 
                 <com.google.android.material.button.MaterialButtonToggleGroup
                     android:id="@+id/toggleIconStyle"
@@ -180,7 +277,7 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- 目标耳机选择（适配 SHEYIN X5 及多耳机） -->
+        <!-- 目标耳机选择 -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -258,7 +355,7 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- 澎湃 OS 快捷配置 -->
+        <!-- 去掉蓝色耳机标快捷入口 -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -278,7 +375,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="澎湃 OS 快捷配置"
+                    android:text="隐藏蓝色耳机图标"
                     android:textColor="@color/text_primary"
                     android:textSize="15sp"
                     android:textStyle="bold" />
@@ -287,7 +384,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="后台常驻需开启自启动+省电无限制；如需顶部状态栏左上角显示数字，请把系统通知样式切换为「原生」"
+                    android:text="点击「通知设置」关闭「通知图标」即可去掉顶部蓝标；若连下拉栏卡片都不要，直接关掉「允许通知」（顶部贴片照常运行）。"
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp" />
 
