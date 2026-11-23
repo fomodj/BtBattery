@@ -13,6 +13,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
+import com.google.android.material.chip.Chip
+import com.google.android.material.chip.ChipGroup
 
 class MainActivity : AppCompatActivity() {
 
@@ -23,6 +25,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvServiceBadge: TextView
     private lateinit var btnToggleService: MaterialButton
     private lateinit var toggleIconStyle: MaterialButtonToggleGroup
+    private lateinit var chipGroupDevices: ChipGroup
+
+    private var lastChipSignature: String = ""
 
     private val requestPerms = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -41,6 +46,7 @@ class MainActivity : AppCompatActivity() {
         tvServiceBadge = findViewById(R.id.tvServiceBadge)
         btnToggleService = findViewById(R.id.btnToggleService)
         toggleIconStyle = findViewById(R.id.toggleIconStyle)
+        chipGroupDevices = findViewById(R.id.chipGroupDevices)
 
         setupStyleToggle()
 
@@ -90,7 +96,7 @@ class MainActivity : AppCompatActivity() {
                 R.id.btnStyleBattery -> BatteryMonitorService.STYLE_BATTERY
                 else -> BatteryMonitorService.STYLE_BADGE
             }
-            prefs.edit().putInt(BatteryMonitorService.KEY_ICON_STYLE, selected).apply()
+            prefs.edit().putInt(BatteryMonitorService.KEY_ICON_STYLE, selected).commit()
             if (BatteryStateHolder.currentState.serviceRunning) {
                 startMonitorService()
             }
@@ -129,6 +135,9 @@ class MainActivity : AppCompatActivity() {
         BatteryStateHolder.setListener { state ->
             runOnUiThread { renderState(state) }
         }
+        if (BatteryStateHolder.currentState.serviceRunning) {
+            startMonitorService()
+        }
     }
 
     override fun onPause() {
@@ -148,6 +157,51 @@ class MainActivity : AppCompatActivity() {
         } else {
             tvServiceBadge.text = "○ 已停止"
             btnToggleService.text = "启动监听"
+        }
+
+        renderDeviceChips(state.pairedDevices)
+    }
+
+    private fun renderDeviceChips(devices: List<PairedDeviceInfo>) {
+        val prefs = getSharedPreferences(BatteryMonitorService.PREFS_NAME, MODE_PRIVATE)
+        val pinnedAddr = prefs.getString(BatteryMonitorService.KEY_PINNED_ADDRESS, "") ?: ""
+        val sig = pinnedAddr + "|" + devices.joinToString(",") { "${it.address}:${it.connected}:${it.battery}" }
+        if (sig == lastChipSignature) return
+        lastChipSignature = sig
+
+        chipGroupDevices.removeAllViews()
+
+        val autoChip = Chip(this).apply {
+            id = android.view.View.generateViewId()
+            text = "自动识别"
+            isCheckable = true
+            isChecked = pinnedAddr.isEmpty()
+            setOnClickListener {
+                prefs.edit().putString(BatteryMonitorService.KEY_PINNED_ADDRESS, "").commit()
+                lastChipSignature = ""
+                startMonitorService()
+            }
+        }
+        chipGroupDevices.addView(autoChip)
+
+        devices.forEach { dev ->
+            val label = buildString {
+                if (dev.connected) append("● ")
+                append(dev.name)
+                if (dev.battery in 0..100) append(" (${dev.battery}%)")
+            }
+            val chip = Chip(this).apply {
+                id = android.view.View.generateViewId()
+                text = label
+                isCheckable = true
+                isChecked = pinnedAddr.equals(dev.address, ignoreCase = true)
+                setOnClickListener {
+                    prefs.edit().putString(BatteryMonitorService.KEY_PINNED_ADDRESS, dev.address).commit()
+                    lastChipSignature = ""
+                    startMonitorService()
+                }
+            }
+            chipGroupDevices.addView(chip)
         }
     }
 }
