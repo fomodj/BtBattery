@@ -151,6 +151,15 @@
                     android:text="授予悬浮窗权限"
                     app:cornerRadius="12dp" />
 
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAccessibilityPerm"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="42dp"
+                    android:layout_marginTop="8dp"
+                    android:text="开启无障碍同步（毫秒级跟随状态栏）"
+                    app:cornerRadius="12dp" />
+
                 <com.google.android.material.switchmaterial.SwitchMaterial
                     android:id="@+id/switchOverlay"
                     android:layout_width="match_parent"

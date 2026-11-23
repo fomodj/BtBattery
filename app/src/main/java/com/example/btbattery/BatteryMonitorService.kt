@@ -59,6 +59,13 @@ class BatteryMonitorService : Service() {
         const val STYLE_RING = 1
         const val STYLE_BATTERY = 2
 
+        @Volatile
+        var instance: BatteryMonitorService? = null
+
+        fun onAccessibilityStatusBarChanged(visible: Boolean) {
+            instance?.handleExternalStatusBarVisibility(visible)
+        }
+
         private const val WATCHDOG_REQ_CODE = 2001
         private const val RESTART_REQ_CODE = 2002
 
@@ -119,6 +126,7 @@ class BatteryMonitorService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         createNotificationChannel()
 
         val manager = getSystemService(BluetoothManager::class.java)
@@ -429,6 +437,10 @@ class BatteryMonitorService : Service() {
             return
         }
 
+        if (StatusBarAccessibilityService.isRunning) {
+            isStatusBarVisible = StatusBarAccessibilityService.lastStatusBarVisible
+        }
+
         val iconStyle = getIconStyle()
         val xDp = prefs.getInt(KEY_OVERLAY_X, 64)
         val yDp = prefs.getInt(KEY_OVERLAY_Y, 12)
@@ -479,58 +491,19 @@ class BatteryMonitorService : Service() {
                         }
                     )
                     setOnApplyWindowInsetsListener { _, insets ->
-                        val visible = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                            insets.isVisible(WindowInsets.Type.statusBars())
-                        } else {
-                            @Suppress("DEPRECATION")
-                            insets.systemWindowInsetTop > 0
-                        }
-                        if (isStatusBarVisible != visible) {
-                            isStatusBarVisible = visible
-                            if (!isInsetsAnimating) {
+                        if (!StatusBarAccessibilityService.isRunning) {
+                            val visible = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                insets.isVisible(WindowInsets.Type.statusBars())
+                            } else {
+                                @Suppress("DEPRECATION")
+                                insets.systemWindowInsetTop > 0
+                            }
+                            if (isStatusBarVisible != visible) {
+                                isStatusBarVisible = visible
                                 animateOverlayBarState(iv, visible)
                             }
                         }
                         insets
-                    }
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        setWindowInsetsAnimationCallback(
-                            object : WindowInsetsAnimation.Callback(DISPATCH_MODE_STOP) {
-                                override fun onPrepare(animation: WindowInsetsAnimation) {
-                                    if (animation.typeMask and WindowInsets.Type.statusBars() != 0) {
-                                        isInsetsAnimating = true
-                                        iv.animate().cancel()
-                                    }
-                                }
-
-                                override fun onProgress(
-                                    insets: WindowInsets,
-                                    runningAnimations: MutableList<WindowInsetsAnimation>
-                                ): WindowInsets {
-                                    val barAnim = runningAnimations.firstOrNull {
-                                        it.typeMask and WindowInsets.Type.statusBars() != 0
-                                    }
-                                    if (barAnim != null) {
-                                        val progress = if (isStatusBarVisible) {
-                                            barAnim.interpolatedFraction
-                                        } else {
-                                            1f - barAnim.interpolatedFraction
-                                        }
-                                        iv.translationY = -overlaySlideDistance * (1f - progress)
-                                        iv.alpha = progress
-                                    }
-                                    return insets
-                                }
-
-                                override fun onEnd(animation: WindowInsetsAnimation) {
-                                    if (animation.typeMask and WindowInsets.Type.statusBars() != 0) {
-                                        isInsetsAnimating = false
-                                        iv.translationY = if (isStatusBarVisible) 0f else -overlaySlideDistance
-                                        iv.alpha = if (isStatusBarVisible) 1f else 0f
-                                    }
-                                }
-                            }
-                        )
                     }
                 }
                 wm.addView(container, params)
@@ -543,10 +516,8 @@ class BatteryMonitorService : Service() {
                     iv.layoutParams = FrameLayout.LayoutParams(widthPx, heightPx).apply {
                         topMargin = yPx
                     }
-                    if (!isInsetsAnimating) {
-                        iv.translationY = if (isStatusBarVisible) 0f else -overlaySlideDistance
-                        iv.alpha = if (isStatusBarVisible) 1f else 0f
-                    }
+                    iv.translationY = if (isStatusBarVisible) 0f else -overlaySlideDistance
+                    iv.alpha = if (isStatusBarVisible) 1f else 0f
                 }
                 wm.updateViewLayout(overlayView, params)
             }
@@ -555,20 +526,31 @@ class BatteryMonitorService : Service() {
         }
     }
 
+    fun handleExternalStatusBarVisibility(visible: Boolean) {
+        mainHandler.post {
+            if (isStatusBarVisible != visible) {
+                isStatusBarVisible = visible
+                overlayIconView?.let { iv ->
+                    animateOverlayBarState(iv, visible)
+                }
+            }
+        }
+    }
+
     private fun animateOverlayBarState(iv: ImageView, visible: Boolean) {
         iv.animate().cancel()
         val targetY = if (visible) 0f else -overlaySlideDistance
         val targetAlpha = if (visible) 1f else 0f
-        val interpolator = if (visible) {
-            PathInterpolator(0f, 0f, 0.2f, 1f)
+        val duration = if (StatusBarAccessibilityService.isRunning) {
+            if (visible) 55L else 45L
         } else {
-            PathInterpolator(0.4f, 0f, 1f, 1f)
+            if (visible) 75L else 60L
         }
         iv.animate()
             .translationY(targetY)
             .alpha(targetAlpha)
-            .setDuration(if (visible) 250L else 200L)
-            .setInterpolator(interpolator)
+            .setDuration(duration)
+            .setInterpolator(PathInterpolator(0.2f, 0f, 0f, 1f))
             .start()
     }
 
@@ -1024,6 +1006,7 @@ class BatteryMonitorService : Service() {
     }
 
     override fun onDestroy() {
+        if (instance === this) instance = null
         removeOverlayView()
         try { unregisterReceiver(btReceiver) } catch (_: Exception) {}
         activeGatt?.close()

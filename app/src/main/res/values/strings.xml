@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_desc">实时检测系统状态栏窗口显隐，使顶部耳机电量贴片与状态栏同步出现和隐藏（不读取任何屏幕文字内容）。</string>
+</resources>

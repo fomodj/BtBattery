@@ -34,6 +34,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var chipGroupDevices: ChipGroup
 
     private lateinit var btnOverlayPerm: MaterialButton
+    private lateinit var btnAccessibilityPerm: MaterialButton
     private lateinit var switchOverlay: SwitchMaterial
     private lateinit var switchPreview: SwitchMaterial
     private lateinit var seekOverlayX: SeekBar
@@ -69,6 +70,7 @@ class MainActivity : AppCompatActivity() {
         chipGroupDevices = findViewById(R.id.chipGroupDevices)
 
         btnOverlayPerm = findViewById(R.id.btnOverlayPerm)
+        btnAccessibilityPerm = findViewById(R.id.btnAccessibilityPerm)
         switchOverlay = findViewById(R.id.switchOverlay)
         switchPreview = findViewById(R.id.switchPreview)
         seekOverlayX = findViewById(R.id.seekOverlayX)
@@ -213,6 +215,9 @@ class MainActivity : AppCompatActivity() {
         val overlayGranted = Settings.canDrawOverlays(this)
         btnOverlayPerm.text = if (overlayGranted) "✓ 已获得悬浮窗权限" else "授予悬浮窗权限（顶部显示必开）"
 
+        val accEnabled = StatusBarAccessibilityService.isRunning || isAccessibilityServiceEnabled()
+        btnAccessibilityPerm.text = if (accEnabled) "✓ 已开启无障碍状态栏同步" else "开启无障碍同步（毫秒级跟随状态栏）"
+
         val pm = getSystemService(PowerManager::class.java)
         val ignoringBattery = pm?.isIgnoringBatteryOptimizations(packageName) == true
         btnBatteryOpt.text = if (ignoringBattery) "✓ 已加入系统「忽略电池优化」白名单" else "一键申请「忽略电池优化」（防杀后台）"
@@ -227,6 +232,10 @@ class MainActivity : AppCompatActivity() {
                 Uri.parse("package:$packageName")
             )
             startActivity(intent)
+        }
+
+        btnAccessibilityPerm.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
 
         switchOverlay.isChecked = prefs.getBoolean(BatteryMonitorService.KEY_OVERLAY_ENABLED, true)
@@ -426,5 +435,14 @@ class MainActivity : AppCompatActivity() {
             }
             chipGroupDevices.addView(chip)
         }
+    }
+
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val expected = "$packageName/${StatusBarAccessibilityService::class.java.name}"
+        val enabledServices = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        return enabledServices.split(':').any { it.equals(expected, ignoreCase = true) }
     }
 }
