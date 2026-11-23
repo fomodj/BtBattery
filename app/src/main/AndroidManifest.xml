@@ -6,10 +6,14 @@
 
     <application
         android:label="耳机电量"
-        android:icon="@android:drawable/stat_sys_data_bluetooth"
-        android:theme="@android:style/Theme.Translucent.NoTitleBar">
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.BtBattery">
 
-        <activity android:name=".MainActivity" android:exported="true">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
