@@ -18,7 +18,10 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.WindowManager
 import android.view.WindowInsets
+import android.view.WindowInsetsAnimation
+import android.view.animation.PathInterpolator
 import android.widget.ImageView
+import android.widget.FrameLayout
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -71,7 +74,10 @@ class BatteryMonitorService : Service() {
     private var isForegroundStarted = false
     private var lastGattAttemptMs = 0L
 
-    private var overlayView: ImageView? = null
+    private var overlayView: FrameLayout? = null
+    private var overlayIconView: ImageView? = null
+    private var overlaySlideDistance: Float = 0f
+    private var isInsetsAnimating: Boolean = false
     private var currentConnectedLevel: Int = -1
     private var isStatusBarVisible: Boolean = true
 
@@ -428,13 +434,16 @@ class BatteryMonitorService : Service() {
         val yDp = prefs.getInt(KEY_OVERLAY_Y, 12)
         val sizeDp = prefs.getInt(KEY_OVERLAY_SIZE, 20)
 
+        val yPx = dpToPx(yDp)
         val heightPx = dpToPx(sizeDp)
         val widthPx = if (iconStyle == STYLE_BATTERY) (heightPx * 1.38f).toInt() else heightPx
+        val containerHeight = yPx + heightPx
+        overlaySlideDistance = containerHeight.toFloat()
         val bitmap = createOverlayGraphic(displayLevel, iconStyle)
 
         val params = WindowManager.LayoutParams(
             widthPx,
-            heightPx,
+            containerHeight,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
@@ -444,7 +453,7 @@ class BatteryMonitorService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = dpToPx(xDp)
-            y = dpToPx(yDp)
+            y = 0
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 fitInsetsTypes = 0
                 layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
@@ -459,8 +468,17 @@ class BatteryMonitorService : Service() {
                 val iv = ImageView(this).apply {
                     scaleType = ImageView.ScaleType.FIT_CENTER
                     setImageBitmap(bitmap)
+                    translationY = if (isStatusBarVisible) 0f else -overlaySlideDistance
                     alpha = if (isStatusBarVisible) 1f else 0f
-                    setOnApplyWindowInsetsListener { view, insets ->
+                }
+                val container = FrameLayout(this).apply {
+                    addView(
+                        iv,
+                        FrameLayout.LayoutParams(widthPx, heightPx).apply {
+                            topMargin = yPx
+                        }
+                    )
+                    setOnApplyWindowInsetsListener { _, insets ->
                         val visible = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                             insets.isVisible(WindowInsets.Type.statusBars())
                         } else {
@@ -469,20 +487,67 @@ class BatteryMonitorService : Service() {
                         }
                         if (isStatusBarVisible != visible) {
                             isStatusBarVisible = visible
-                            view.animate()
-                                .alpha(if (visible) 1f else 0f)
-                                .setDuration(120L)
-                                .start()
+                            if (!isInsetsAnimating) {
+                                animateOverlayBarState(iv, visible)
+                            }
                         }
                         insets
                     }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        setWindowInsetsAnimationCallback(
+                            object : WindowInsetsAnimation.Callback(DISPATCH_MODE_STOP) {
+                                override fun onPrepare(animation: WindowInsetsAnimation) {
+                                    if (animation.typeMask and WindowInsets.Type.statusBars() != 0) {
+                                        isInsetsAnimating = true
+                                        iv.animate().cancel()
+                                    }
+                                }
+
+                                override fun onProgress(
+                                    insets: WindowInsets,
+                                    runningAnimations: MutableList<WindowInsetsAnimation>
+                                ): WindowInsets {
+                                    val barAnim = runningAnimations.firstOrNull {
+                                        it.typeMask and WindowInsets.Type.statusBars() != 0
+                                    }
+                                    if (barAnim != null) {
+                                        val progress = if (isStatusBarVisible) {
+                                            barAnim.interpolatedFraction
+                                        } else {
+                                            1f - barAnim.interpolatedFraction
+                                        }
+                                        iv.translationY = -overlaySlideDistance * (1f - progress)
+                                        iv.alpha = progress
+                                    }
+                                    return insets
+                                }
+
+                                override fun onEnd(animation: WindowInsetsAnimation) {
+                                    if (animation.typeMask and WindowInsets.Type.statusBars() != 0) {
+                                        isInsetsAnimating = false
+                                        iv.translationY = if (isStatusBarVisible) 0f else -overlaySlideDistance
+                                        iv.alpha = if (isStatusBarVisible) 1f else 0f
+                                    }
+                                }
+                            }
+                        )
+                    }
                 }
-                wm.addView(iv, params)
-                iv.requestApplyInsets()
-                overlayView = iv
+                wm.addView(container, params)
+                container.requestApplyInsets()
+                overlayView = container
+                overlayIconView = iv
             } else {
-                overlayView?.setImageBitmap(bitmap)
-                overlayView?.alpha = if (isStatusBarVisible) 1f else 0f
+                overlayIconView?.let { iv ->
+                    iv.setImageBitmap(bitmap)
+                    iv.layoutParams = FrameLayout.LayoutParams(widthPx, heightPx).apply {
+                        topMargin = yPx
+                    }
+                    if (!isInsetsAnimating) {
+                        iv.translationY = if (isStatusBarVisible) 0f else -overlaySlideDistance
+                        iv.alpha = if (isStatusBarVisible) 1f else 0f
+                    }
+                }
                 wm.updateViewLayout(overlayView, params)
             }
         } catch (_: Exception) {
@@ -490,9 +555,28 @@ class BatteryMonitorService : Service() {
         }
     }
 
+    private fun animateOverlayBarState(iv: ImageView, visible: Boolean) {
+        iv.animate().cancel()
+        val targetY = if (visible) 0f else -overlaySlideDistance
+        val targetAlpha = if (visible) 1f else 0f
+        val interpolator = if (visible) {
+            PathInterpolator(0f, 0f, 0.2f, 1f)
+        } else {
+            PathInterpolator(0.4f, 0f, 1f, 1f)
+        }
+        iv.animate()
+            .translationY(targetY)
+            .alpha(targetAlpha)
+            .setDuration(if (visible) 250L else 200L)
+            .setInterpolator(interpolator)
+            .start()
+    }
+
     private fun removeOverlayView() {
         val view = overlayView ?: return
         overlayView = null
+        overlayIconView = null
+        isInsetsAnimating = false
         isStatusBarVisible = true
         try {
             getSystemService(WindowManager::class.java)?.removeView(view)
