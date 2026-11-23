@@ -177,6 +177,14 @@
                     android:textColor="@color/text_secondary"
                     android:textSize="13sp" />
 
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/switchAutoFollow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="左侧智能紧随（自动避让微信/充电图标）"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp" />
+
                 <TextView
                     android:id="@+id/tvOverlayX"
                     android:layout_width="wrap_content"

@@ -37,6 +37,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnAccessibilityPerm: MaterialButton
     private lateinit var switchOverlay: SwitchMaterial
     private lateinit var switchPreview: SwitchMaterial
+    private lateinit var switchAutoFollow: SwitchMaterial
     private lateinit var seekOverlayX: SeekBar
     private lateinit var seekOverlayY: SeekBar
     private lateinit var seekOverlaySize: SeekBar
@@ -73,6 +74,7 @@ class MainActivity : AppCompatActivity() {
         btnAccessibilityPerm = findViewById(R.id.btnAccessibilityPerm)
         switchOverlay = findViewById(R.id.switchOverlay)
         switchPreview = findViewById(R.id.switchPreview)
+        switchAutoFollow = findViewById(R.id.switchAutoFollow)
         seekOverlayX = findViewById(R.id.seekOverlayX)
         seekOverlayY = findViewById(R.id.seekOverlayY)
         seekOverlaySize = findViewById(R.id.seekOverlaySize)
@@ -240,18 +242,17 @@ class MainActivity : AppCompatActivity() {
 
         switchOverlay.isChecked = prefs.getBoolean(BatteryMonitorService.KEY_OVERLAY_ENABLED, true)
         switchPreview.isChecked = prefs.getBoolean(BatteryMonitorService.KEY_OVERLAY_PREVIEW, false)
+        val initialAutoFollow = prefs.getBoolean(BatteryMonitorService.KEY_AUTO_FOLLOW_LEFT, true)
+        switchAutoFollow.isChecked = initialAutoFollow
 
-        val savedX = prefs.getInt(BatteryMonitorService.KEY_OVERLAY_X, 64)
         val savedY = prefs.getInt(BatteryMonitorService.KEY_OVERLAY_Y, 12)
         val savedSize = prefs.getInt(BatteryMonitorService.KEY_OVERLAY_SIZE, 20)
 
-        seekOverlayX.progress = savedX.coerceIn(0, 320)
         seekOverlayY.progress = savedY.coerceIn(0, 56)
         seekOverlaySize.progress = (savedSize - 14).coerceIn(0, 18)
-
-        tvOverlayX.text = "水平位置 X：$savedX dp"
         tvOverlayY.text = "垂直位置 Y：$savedY dp"
         tvOverlaySize.text = "图标大小：$savedSize dp"
+        updateXSliderMode(initialAutoFollow)
 
         switchOverlay.setOnCheckedChangeListener { _, checked ->
             if (checked && !Settings.canDrawOverlays(this)) {
@@ -266,13 +267,27 @@ class MainActivity : AppCompatActivity() {
             notifyOverlayUpdate()
         }
 
+        switchAutoFollow.setOnCheckedChangeListener { _, checked ->
+            if (checked && !StatusBarAccessibilityService.isRunning && !isAccessibilityServiceEnabled()) {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+            prefs.edit().putBoolean(BatteryMonitorService.KEY_AUTO_FOLLOW_LEFT, checked).commit()
+            updateXSliderMode(checked)
+            notifyOverlayUpdate()
+        }
+
         val seekListener = object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
                 if (!fromUser) return
                 when (seekBar.id) {
                     R.id.seekOverlayX -> {
-                        tvOverlayX.text = "水平位置 X：$progress dp"
-                        prefs.edit().putInt(BatteryMonitorService.KEY_OVERLAY_X, progress).commit()
+                        if (switchAutoFollow.isChecked) {
+                            tvOverlayX.text = "紧随右侧间距：$progress dp"
+                            prefs.edit().putInt(BatteryMonitorService.KEY_FOLLOW_GAP_DP, progress).commit()
+                        } else {
+                            tvOverlayX.text = "水平位置 X：$progress dp"
+                            prefs.edit().putInt(BatteryMonitorService.KEY_OVERLAY_X, progress).commit()
+                        }
                     }
                     R.id.seekOverlayY -> {
                         tvOverlayY.text = "垂直位置 Y：$progress dp"
@@ -444,5 +459,20 @@ class MainActivity : AppCompatActivity() {
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         ) ?: return false
         return enabledServices.split(':').any { it.equals(expected, ignoreCase = true) }
+    }
+
+    private fun updateXSliderMode(isAuto: Boolean) {
+        val prefs = getSharedPreferences(BatteryMonitorService.PREFS_NAME, MODE_PRIVATE)
+        if (isAuto) {
+            seekOverlayX.max = 24
+            val gap = prefs.getInt(BatteryMonitorService.KEY_FOLLOW_GAP_DP, 4).coerceIn(0, 24)
+            seekOverlayX.progress = gap
+            tvOverlayX.text = "紧随右侧间距：$gap dp"
+        } else {
+            seekOverlayX.max = 320
+            val x = prefs.getInt(BatteryMonitorService.KEY_OVERLAY_X, 64).coerceIn(0, 320)
+            seekOverlayX.progress = x
+            tvOverlayX.text = "水平位置 X：$x dp"
+        }
     }
 }

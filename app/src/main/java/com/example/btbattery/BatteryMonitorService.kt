@@ -17,6 +17,7 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
 import android.view.WindowManager
+import android.animation.ValueAnimator
 import android.view.WindowInsets
 import android.view.WindowInsetsAnimation
 import android.view.animation.PathInterpolator
@@ -50,6 +51,8 @@ class BatteryMonitorService : Service() {
         const val KEY_OVERLAY_X = "overlay_x_dp"
         const val KEY_OVERLAY_Y = "overlay_y_dp"
         const val KEY_OVERLAY_SIZE = "overlay_size_dp"
+        const val KEY_AUTO_FOLLOW_LEFT = "overlay_auto_follow_left"
+        const val KEY_FOLLOW_GAP_DP = "overlay_follow_gap_dp"
 
         const val KEY_HIDE_RECENTS = "hide_from_recents"
         const val KEY_KEEP_ALIVE = "keep_alive_enabled"
@@ -64,6 +67,10 @@ class BatteryMonitorService : Service() {
 
         fun onAccessibilityStatusBarChanged(visible: Boolean) {
             instance?.handleExternalStatusBarVisibility(visible)
+        }
+
+        fun onAccessibilityLeftEdgeChanged(rightPx: Int) {
+            instance?.handleExternalLeftEdgeChanged(rightPx)
         }
 
         private const val WATCHDOG_REQ_CODE = 2001
@@ -87,6 +94,8 @@ class BatteryMonitorService : Service() {
     private var isInsetsAnimating: Boolean = false
     private var currentConnectedLevel: Int = -1
     private var isStatusBarVisible: Boolean = true
+    private var currentOverlayX: Int = -1
+    private var xSlideAnimator: ValueAnimator? = null
 
     private val profileListener = object : BluetoothProfile.ServiceListener {
         override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
@@ -445,6 +454,8 @@ class BatteryMonitorService : Service() {
         val xDp = prefs.getInt(KEY_OVERLAY_X, 64)
         val yDp = prefs.getInt(KEY_OVERLAY_Y, 12)
         val sizeDp = prefs.getInt(KEY_OVERLAY_SIZE, 20)
+        val autoFollow = prefs.getBoolean(KEY_AUTO_FOLLOW_LEFT, true)
+        val gapDp = prefs.getInt(KEY_FOLLOW_GAP_DP, 4)
 
         val yPx = dpToPx(yDp)
         val heightPx = dpToPx(sizeDp)
@@ -452,6 +463,18 @@ class BatteryMonitorService : Service() {
         val containerHeight = yPx + heightPx
         overlaySlideDistance = containerHeight.toFloat()
         val bitmap = createOverlayGraphic(displayLevel, iconStyle)
+
+        val screenWidth = resources.displayMetrics.widthPixels
+        val maxSafeLeftPx = ((screenWidth * 0.43f).toInt() - widthPx).coerceAtLeast(dpToPx(8))
+        val targetX = if (autoFollow && StatusBarAccessibilityService.isRunning && StatusBarAccessibilityService.lastLeftEdgePx > 0) {
+            (StatusBarAccessibilityService.lastLeftEdgePx + dpToPx(gapDp)).coerceIn(dpToPx(8), maxSafeLeftPx)
+        } else {
+            dpToPx(xDp)
+        }
+
+        if (overlayView == null || currentOverlayX < 0) {
+            currentOverlayX = targetX
+        }
 
         val params = WindowManager.LayoutParams(
             widthPx,
@@ -464,7 +487,7 @@ class BatteryMonitorService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = dpToPx(xDp)
+            x = currentOverlayX
             y = 0
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 fitInsetsTypes = 0
@@ -520,6 +543,9 @@ class BatteryMonitorService : Service() {
                     iv.alpha = if (isStatusBarVisible) 1f else 0f
                 }
                 wm.updateViewLayout(overlayView, params)
+                if (currentOverlayX != targetX) {
+                    animateOverlayXTo(targetX)
+                }
             }
         } catch (_: Exception) {
             removeOverlayView()
@@ -534,6 +560,36 @@ class BatteryMonitorService : Service() {
                     animateOverlayBarState(iv, visible)
                 }
             }
+        }
+    }
+
+    fun handleExternalLeftEdgeChanged(rightPx: Int) {
+        mainHandler.post {
+            if (overlayView != null) {
+                updateOverlayView()
+            }
+        }
+    }
+
+    private fun animateOverlayXTo(targetX: Int) {
+        val startX = currentOverlayX
+        if (startX == targetX) return
+        xSlideAnimator?.cancel()
+        xSlideAnimator = ValueAnimator.ofInt(startX, targetX).apply {
+            duration = 140L
+            interpolator = PathInterpolator(0.2f, 0f, 0f, 1f)
+            addUpdateListener { anim ->
+                val view = overlayView ?: return@addUpdateListener
+                val v = anim.animatedValue as Int
+                currentOverlayX = v
+                try {
+                    val lp = view.layoutParams as? WindowManager.LayoutParams ?: return@addUpdateListener
+                    lp.x = v
+                    getSystemService(WindowManager::class.java)?.updateViewLayout(view, lp)
+                } catch (_: Exception) {
+                }
+            }
+            start()
         }
     }
 
@@ -555,6 +611,9 @@ class BatteryMonitorService : Service() {
     }
 
     private fun removeOverlayView() {
+        xSlideAnimator?.cancel()
+        xSlideAnimator = null
+        currentOverlayX = -1
         val view = overlayView ?: return
         overlayView = null
         overlayIconView = null
