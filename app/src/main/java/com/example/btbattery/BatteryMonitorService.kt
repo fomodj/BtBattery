@@ -276,10 +276,10 @@ class BatteryMonitorService : Service() {
         val size = 96
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        val style = getIconStyle()
+        val iconStyle = getIconStyle()
         val text = level.toString()
 
-        when (style) {
+        when (iconStyle) {
             STYLE_BATTERY -> {
                 // 空心电池框 + 内部数字
                 val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
