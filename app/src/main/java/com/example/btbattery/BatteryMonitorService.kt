@@ -235,21 +235,17 @@ class BatteryMonitorService : Service() {
 
         val logBuilder = StringBuilder()
         if (pinnedAddr.isNotEmpty()) {
-            logBuilder.append("当前模式：已锁定设备 ($pinnedAddr)
-")
+            logBuilder.append("当前模式：已锁定设备 ($pinnedAddr)\n")
         } else {
-            logBuilder.append("当前模式：自动识别（已自动过滤手表/手环）
-")
+            logBuilder.append("当前模式：自动识别（已自动过滤手表/手环）\n")
         }
 
         if (candidates.isEmpty()) {
-            logBuilder.append("当前无已连接的目标耳机
-")
+            logBuilder.append("当前无已连接的目标耳机\n")
             if (connectedMap.isNotEmpty()) {
                 logBuilder.append("其他已连接蓝牙：")
                 logBuilder.append(connectedMap.values.joinToString("、") { it.name ?: it.address })
-                logBuilder.append("
-")
+                logBuilder.append("\n")
             }
             logBuilder.append("若奢音 X5 处于本地 MP3 游泳模式，蓝牙会暂时断开。")
             updateUiAndIdle("未检测到已连接耳机", "连上耳机后通知栏自动显示", logBuilder.toString().trim(), pairedUiList)
@@ -266,8 +262,7 @@ class BatteryMonitorService : Service() {
             val rLvl = getBatteryLevelReflection(dev)
             val cLvl = cachedLevels[dev.address] ?: -1
             val devName = dev.name ?: dev.address
-            logBuilder.append("• [已连接] $devName | 系统:$rLvl% 扩展:$cLvl%
-")
+            logBuilder.append("• [已连接] $devName | 系统:$rLvl% 扩展:$cLvl%\n")
         }
 
         if (finalLevel in 0..100) {
