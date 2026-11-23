@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
 import android.view.WindowManager
@@ -34,6 +35,8 @@ class BatteryMonitorService : Service() {
         const val EXTRA_BATTERY_LEVEL = "android.bluetooth.device.extra.BATTERY_LEVEL"
         const val ACTION_REFRESH = "com.example.btbattery.ACTION_REFRESH"
         const val ACTION_UPDATE_OVERLAY = "com.example.btbattery.ACTION_UPDATE_OVERLAY"
+        const val ACTION_KEEP_ALIVE = "com.example.btbattery.ACTION_KEEP_ALIVE"
+
         const val PREFS_NAME = "bt_battery_prefs"
         const val KEY_ICON_STYLE = "icon_style_v3"
         const val KEY_PINNED_ADDRESS = "pinned_device_address"
@@ -44,9 +47,16 @@ class BatteryMonitorService : Service() {
         const val KEY_OVERLAY_Y = "overlay_y_dp"
         const val KEY_OVERLAY_SIZE = "overlay_size_dp"
 
+        const val KEY_HIDE_RECENTS = "hide_from_recents"
+        const val KEY_KEEP_ALIVE = "keep_alive_enabled"
+        const val KEY_USER_STOPPED = "user_manually_stopped"
+
         const val STYLE_BADGE = 0
         const val STYLE_RING = 1
         const val STYLE_BATTERY = 2
+
+        private const val WATCHDOG_REQ_CODE = 2001
+        private const val RESTART_REQ_CODE = 2002
 
         private val BATTERY_SERVICE_UUID = UUID.fromString("0000180f-0000-1000-8000-00805f9b34fb")
         private val BATTERY_LEVEL_CHAR_UUID = UUID.fromString("00002a19-0000-1000-8000-00805f9b34fb")
@@ -125,16 +135,73 @@ class BatteryMonitorService : Service() {
         ContextCompat.registerReceiver(this, btReceiver, vendorFilter, ContextCompat.RECEIVER_EXPORTED)
 
         showIdleNotification("等待耳机连接")
+        syncWatchdogSchedule()
         refreshAudioDeviceBattery()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        syncWatchdogSchedule()
         if (intent?.action == ACTION_UPDATE_OVERLAY) {
             updateOverlayView()
             return START_STICKY
         }
         refreshAudioDeviceBattery()
         return START_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val keepAlive = prefs.getBoolean(KEY_KEEP_ALIVE, true)
+        val userStopped = prefs.getBoolean(KEY_USER_STOPPED, false)
+        if (keepAlive && !userStopped) {
+            scheduleQuickRestart()
+        }
+    }
+
+    private fun buildKeepAlivePendingIntent(reqCode: Int): PendingIntent {
+        val intent = Intent(this, BootReceiver::class.java).apply {
+            action = ACTION_KEEP_ALIVE
+        }
+        return PendingIntent.getBroadcast(
+            this,
+            reqCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun syncWatchdogSchedule() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val keepAlive = prefs.getBoolean(KEY_KEEP_ALIVE, true)
+        val userStopped = prefs.getBoolean(KEY_USER_STOPPED, false)
+        val am = getSystemService(AlarmManager::class.java) ?: return
+        val pi = buildKeepAlivePendingIntent(WATCHDOG_REQ_CODE)
+
+        if (keepAlive && !userStopped) {
+            // 非唤醒式低耗守护：不打断深度休眠，仅在手机亮屏活动间隙自动检查并复活进程
+            am.setInexactRepeating(
+                AlarmManager.ELAPSED_REALTIME,
+                SystemClock.elapsedRealtime() + AlarmManager.INTERVAL_FIFTEEN_MINUTES,
+                AlarmManager.INTERVAL_FIFTEEN_MINUTES,
+                pi
+            )
+        } else {
+            am.cancel(pi)
+        }
+    }
+
+    private fun scheduleQuickRestart() {
+        try {
+            val am = getSystemService(AlarmManager::class.java) ?: return
+            val pi = buildKeepAlivePendingIntent(RESTART_REQ_CODE)
+            am.set(
+                AlarmManager.ELAPSED_REALTIME,
+                SystemClock.elapsedRealtime() + 1500L,
+                pi
+            )
+        } catch (_: Exception) {
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -342,7 +409,6 @@ class BatteryMonitorService : Service() {
         )
     }
 
-    // 顶部状态栏动态悬浮贴片核心逻辑
     private fun updateOverlayView() {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val enabled = prefs.getBoolean(KEY_OVERLAY_ENABLED, true)
@@ -360,7 +426,6 @@ class BatteryMonitorService : Service() {
         val yDp = prefs.getInt(KEY_OVERLAY_Y, 12)
         val sizeDp = prefs.getInt(KEY_OVERLAY_SIZE, 20)
 
-        // 电池框宽高比略宽一点（1.35:1），视觉上与系统电池图标比例一致
         val heightPx = dpToPx(sizeDp)
         val widthPx = if (iconStyle == STYLE_BATTERY) (heightPx * 1.38f).toInt() else heightPx
         val bitmap = createOverlayGraphic(displayLevel, iconStyle)
@@ -415,7 +480,6 @@ class BatteryMonitorService : Service() {
 
     private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density + 0.5f).toInt()
 
-    // 专供顶部状态栏渲染的高对比度矢量位图（浅色/深色壁纸均清晰可读）
     private fun createOverlayGraphic(level: Int, iconStyle: Int): Bitmap {
         val accent = getLevelColor(level)
         val endColor = when {
@@ -438,7 +502,6 @@ class BatteryMonitorService : Service() {
                 }
                 canvas.drawRoundRect(bodyRect, 28f, 28f, bgPaint)
 
-                // 右侧电池正极凸点
                 val tipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = endColor
                     style = Paint.Style.FILL
@@ -461,7 +524,6 @@ class BatteryMonitorService : Service() {
                 val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
                 val canvas = Canvas(bitmap)
 
-                // 深色半透明圆形底托，确保在亮色壁纸上依然锐利
                 val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = Color.argb(185, 18, 22, 30)
                     style = Paint.Style.FILL
@@ -863,6 +925,16 @@ class BatteryMonitorService : Service() {
         headsetProxy?.let { adapter?.closeProfileProxy(BluetoothProfile.HEADSET, it) }
         a2dpProxy?.let { adapter?.closeProfileProxy(BluetoothProfile.A2DP, it) }
         isForegroundStarted = false
+
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val userStopped = prefs.getBoolean(KEY_USER_STOPPED, false)
+        val keepAlive = prefs.getBoolean(KEY_KEEP_ALIVE, true)
+        if (userStopped || !keepAlive) {
+            syncWatchdogSchedule()
+        } else {
+            scheduleQuickRestart()
+        }
+
         BatteryStateHolder.update(
             BatteryStateHolder.currentState.copy(serviceRunning = false)
         )

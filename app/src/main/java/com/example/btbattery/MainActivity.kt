@@ -1,11 +1,15 @@
 package com.example.btbattery
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.app.ActivityManager
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.widget.SeekBar
 import android.widget.TextView
@@ -39,6 +43,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvOverlayY: TextView
     private lateinit var tvOverlaySize: TextView
 
+    private lateinit var switchHideRecents: SwitchMaterial
+    private lateinit var switchKeepAlive: SwitchMaterial
+    private lateinit var btnBatteryOpt: MaterialButton
+
     private var lastChipSignature: String = ""
 
     private val requestPerms = registerForActivityResult(
@@ -70,18 +78,98 @@ class MainActivity : AppCompatActivity() {
         tvOverlayY = findViewById(R.id.tvOverlayY)
         tvOverlaySize = findViewById(R.id.tvOverlaySize)
 
+        switchHideRecents = findViewById(R.id.switchHideRecents)
+        switchKeepAlive = findViewById(R.id.switchKeepAlive)
+        btnBatteryOpt = findViewById(R.id.btnBatteryOpt)
+
         setupStyleToggle()
         setupOverlayControls()
+        setupBackgroundControls()
 
         findViewById<MaterialButton>(R.id.btnRefresh).setOnClickListener {
+            setUserStopped(false)
             ensurePermissionsAndStart()
         }
 
         btnToggleService.setOnClickListener {
             if (BatteryStateHolder.currentState.serviceRunning) {
+                setUserStopped(true)
                 stopService(Intent(this, BatteryMonitorService::class.java))
             } else {
+                setUserStopped(false)
                 ensurePermissionsAndStart()
+            }
+        }
+
+        val prefs = getSharedPreferences(BatteryMonitorService.PREFS_NAME, MODE_PRIVATE)
+        applyExcludeFromRecents(prefs.getBoolean(BatteryMonitorService.KEY_HIDE_RECENTS, false))
+        if (!prefs.getBoolean(BatteryMonitorService.KEY_USER_STOPPED, false)) {
+            ensurePermissionsAndStart()
+        }
+    }
+
+    @SuppressLint("BatteryLife")
+    private fun setupBackgroundControls() {
+        val prefs = getSharedPreferences(BatteryMonitorService.PREFS_NAME, MODE_PRIVATE)
+
+        switchHideRecents.isChecked = prefs.getBoolean(BatteryMonitorService.KEY_HIDE_RECENTS, false)
+        switchKeepAlive.isChecked = prefs.getBoolean(BatteryMonitorService.KEY_KEEP_ALIVE, true)
+
+        switchHideRecents.setOnCheckedChangeListener { _, checked ->
+            prefs.edit().putBoolean(BatteryMonitorService.KEY_HIDE_RECENTS, checked).commit()
+            applyExcludeFromRecents(checked)
+        }
+
+        switchKeepAlive.setOnCheckedChangeListener { _, checked ->
+            prefs.edit().putBoolean(BatteryMonitorService.KEY_KEEP_ALIVE, checked).commit()
+            if (BatteryStateHolder.currentState.serviceRunning) {
+                startMonitorService()
+            }
+        }
+
+        btnBatteryOpt.setOnClickListener {
+            try {
+                val intent = Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName")
+                )
+                startActivity(intent)
+            } catch (_: Exception) {
+                try {
+                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                } catch (_: Exception) {
+                    openAppDetails()
+                }
+            }
+        }
+
+        findViewById<MaterialButton>(R.id.btnMiuiAutostart).setOnClickListener {
+            try {
+                val intent = Intent().apply {
+                    component = ComponentName(
+                        "com.miui.securitycenter",
+                        "com.miui.permcenter.autostart.AutoStartManagementActivity"
+                    )
+                }
+                startActivity(intent)
+            } catch (_: Exception) {
+                openAppDetails()
+            }
+        }
+
+        findViewById<MaterialButton>(R.id.btnMiuiPower).setOnClickListener {
+            try {
+                val intent = Intent().apply {
+                    component = ComponentName(
+                        "com.miui.powerkeeper",
+                        "com.miui.powerkeeper.ui.HiddenAppsConfigActivity"
+                    )
+                    putExtra("package_name", packageName)
+                    putExtra("package_label", "耳机电量")
+                }
+                startActivity(intent)
+            } catch (_: Exception) {
+                openAppDetails()
             }
         }
 
@@ -93,13 +181,41 @@ class MainActivity : AppCompatActivity() {
         }
 
         findViewById<MaterialButton>(R.id.btnAppInfo).setOnClickListener {
-            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.fromParts("package", packageName, null)
-            }
-            startActivity(intent)
+            openAppDetails()
         }
+    }
 
-        ensurePermissionsAndStart()
+    private fun openAppDetails() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", packageName, null)
+        }
+        startActivity(intent)
+    }
+
+    private fun applyExcludeFromRecents(hide: Boolean) {
+        try {
+            val am = getSystemService(ActivityManager::class.java)
+            am?.appTasks?.forEach { task ->
+                task.setExcludeFromRecents(hide)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun setUserStopped(stopped: Boolean) {
+        getSharedPreferences(BatteryMonitorService.PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .putBoolean(BatteryMonitorService.KEY_USER_STOPPED, stopped)
+            .commit()
+    }
+
+    private fun refreshSystemPermButtons() {
+        val overlayGranted = Settings.canDrawOverlays(this)
+        btnOverlayPerm.text = if (overlayGranted) "✓ 已获得悬浮窗权限" else "授予悬浮窗权限（顶部显示必开）"
+
+        val pm = getSystemService(PowerManager::class.java)
+        val ignoringBattery = pm?.isIgnoringBatteryOptimizations(packageName) == true
+        btnBatteryOpt.text = if (ignoringBattery) "✓ 已加入系统「忽略电池优化」白名单" else "一键申请「忽略电池优化」（防杀后台）"
     }
 
     private fun setupOverlayControls() {
@@ -171,13 +287,9 @@ class MainActivity : AppCompatActivity() {
         seekOverlaySize.setOnSeekBarChangeListener(seekListener)
     }
 
-    private fun refreshOverlayPermButton() {
-        val granted = Settings.canDrawOverlays(this)
-        btnOverlayPerm.text = if (granted) "✓ 已获得悬浮窗权限" else "授予悬浮窗权限（顶部显示必开）"
-    }
-
     private fun notifyOverlayUpdate() {
         if (!BatteryStateHolder.currentState.serviceRunning) {
+            setUserStopped(false)
             ensurePermissionsAndStart()
             return
         }
@@ -240,7 +352,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        refreshOverlayPermButton()
+        refreshSystemPermButtons()
+        val prefs = getSharedPreferences(BatteryMonitorService.PREFS_NAME, MODE_PRIVATE)
+        applyExcludeFromRecents(prefs.getBoolean(BatteryMonitorService.KEY_HIDE_RECENTS, false))
         BatteryStateHolder.setListener { state ->
             runOnUiThread { renderState(state) }
         }
