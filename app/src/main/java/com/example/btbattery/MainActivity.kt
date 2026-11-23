@@ -75,22 +75,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupStyleToggle() {
         val prefs = getSharedPreferences(BatteryMonitorService.PREFS_NAME, MODE_PRIVATE)
-        val savedStyle = prefs.getInt(BatteryMonitorService.KEY_ICON_STYLE, BatteryMonitorService.STYLE_BATTERY)
+        val savedStyle = prefs.getInt(BatteryMonitorService.KEY_ICON_STYLE, BatteryMonitorService.STYLE_BADGE)
         val checkedId = when (savedStyle) {
-            BatteryMonitorService.STYLE_PLAIN -> R.id.btnStylePlain
-            BatteryMonitorService.STYLE_PILL -> R.id.btnStylePill
-            else -> R.id.btnStyleBattery
+            BatteryMonitorService.STYLE_RING -> R.id.btnStyleRing
+            BatteryMonitorService.STYLE_BATTERY -> R.id.btnStyleBattery
+            else -> R.id.btnStyleBadge
         }
         toggleIconStyle.check(checkedId)
 
         toggleIconStyle.addOnButtonCheckedListener { _, id, isChecked ->
             if (!isChecked) return@addOnButtonCheckedListener
-            val style = when (id) {
-                R.id.btnStylePlain -> BatteryMonitorService.STYLE_PLAIN
-                R.id.btnStylePill -> BatteryMonitorService.STYLE_PILL
-                else -> BatteryMonitorService.STYLE_BATTERY
+            val selected = when (id) {
+                R.id.btnStyleRing -> BatteryMonitorService.STYLE_RING
+                R.id.btnStyleBattery -> BatteryMonitorService.STYLE_BATTERY
+                else -> BatteryMonitorService.STYLE_BADGE
             }
-            prefs.edit().putInt(BatteryMonitorService.KEY_ICON_STYLE, style).apply()
+            prefs.edit().putInt(BatteryMonitorService.KEY_ICON_STYLE, selected).apply()
             if (BatteryStateHolder.currentState.serviceRunning) {
                 startMonitorService()
             }

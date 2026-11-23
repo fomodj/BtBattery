@@ -12,7 +12,6 @@
         android:orientation="vertical"
         android:padding="20dp">
 
-        <!-- 顶栏 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -43,7 +42,6 @@
                 android:textStyle="bold" />
         </LinearLayout>
 
-        <!-- 主电量卡片 -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -111,7 +109,6 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- 状态栏图标样式切换 -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -130,7 +127,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="状态栏图标样式"
+                    android:text="通知与状态栏图标样式"
                     android:textColor="@color/text_primary"
                     android:textSize="15sp"
                     android:textStyle="bold" />
@@ -139,7 +136,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
-                    android:text="点击即时生效（需在系统通知设置中开启原生样式）"
+                    android:text="按电量自动变色（绿/琥珀/红），点击即时切换"
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp" />
 
@@ -152,12 +149,21 @@
                     app:singleSelection="true">
 
                     <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnStylePlain"
+                        android:id="@+id/btnStyleBadge"
                         style="@style/Widget.Material3.Button.OutlinedButton"
                         android:layout_width="0dp"
                         android:layout_height="42dp"
                         android:layout_weight="1"
-                        android:text="纯数字"
+                        android:text="圆角徽章"
+                        android:textSize="13sp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnStyleRing"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="42dp"
+                        android:layout_weight="1"
+                        android:text="环形仪表"
                         android:textSize="13sp" />
 
                     <com.google.android.material.button.MaterialButton
@@ -168,20 +174,10 @@
                         android:layout_weight="1"
                         android:text="电池框"
                         android:textSize="13sp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnStylePill"
-                        style="@style/Widget.Material3.Button.OutlinedButton"
-                        android:layout_width="0dp"
-                        android:layout_height="42dp"
-                        android:layout_weight="1"
-                        android:text="反白胶囊"
-                        android:textSize="13sp" />
                 </com.google.android.material.button.MaterialButtonToggleGroup>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- 检测到的蓝牙设备状态 -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -217,7 +213,6 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- 小米 / 澎湃 OS 快捷设置 -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -246,7 +241,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="若状态栏不显示数字，请在系统设置→通知与状态栏→通知显示设置中切换为「原生」"
+                    android:text="如需后台持久常驻，请开启自启动并将省电策略设为无限制"
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp" />
 

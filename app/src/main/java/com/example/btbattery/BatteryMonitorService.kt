@@ -25,11 +25,11 @@ class BatteryMonitorService : Service() {
         const val EXTRA_BATTERY_LEVEL = "android.bluetooth.device.extra.BATTERY_LEVEL"
         const val ACTION_REFRESH = "com.example.btbattery.ACTION_REFRESH"
         const val PREFS_NAME = "bt_battery_prefs"
-        const val KEY_ICON_STYLE = "icon_style"
+        const val KEY_ICON_STYLE = "icon_style_v3"
 
-        const val STYLE_PLAIN = 0
-        const val STYLE_BATTERY = 1
-        const val STYLE_PILL = 2
+        const val STYLE_BADGE = 0
+        const val STYLE_RING = 1
+        const val STYLE_BATTERY = 2
 
         private val BATTERY_SERVICE_UUID = UUID.fromString("0000180f-0000-1000-8000-00805f9b34fb")
         private val BATTERY_LEVEL_CHAR_UUID = UUID.fromString("00002a19-0000-1000-8000-00805f9b34fb")
@@ -67,7 +67,6 @@ class BatteryMonitorService : Service() {
                     cachedLevels[device.address] = level
                 }
             }
-            // 蓝牙连接瞬间系统电量可能延迟几百毫秒上报，顺带延迟补查一次
             refreshAudioDeviceBattery()
             mainHandler.postDelayed({ refreshAudioDeviceBattery() }, 1500)
         }
@@ -120,7 +119,6 @@ class BatteryMonitorService : Service() {
             return
         }
 
-        // 兜底：若 ProfileProxy 还没回调或设备走特殊协议，扫描已配对列表
         val bonded = try { adapter.bondedDevices ?: emptySet() } catch (_: SecurityException) { emptySet() }
         if (connectedAudio.isEmpty()) {
             bonded.forEach { device ->
@@ -162,15 +160,14 @@ class BatteryMonitorService : Service() {
                     BatteryUiState(
                         serviceRunning = true,
                         deviceName = name,
-                        deviceSubtitle = "音频已连接 · 状态栏同步中",
+                        deviceSubtitle = "音频已连接 · 实时同步中",
                         batteryLevel = bestLevel,
                         diagnosticLog = logBuilder.toString().trim()
                     )
                 )
             } else {
-                // 尝试通过 BLE 标准电量服务兜底读取
                 tryReadGattBattery(target)
-                showIdleNotification("$name 已连接（正在获取电量）")
+                showIdleNotification("$name 已连接（读取电量中）")
                 BatteryStateHolder.update(
                     BatteryUiState(
                         serviceRunning = true,
@@ -182,9 +179,8 @@ class BatteryMonitorService : Service() {
                 )
             }
         } else {
-            val bondedCount = bonded.size
-            logBuilder.append("已配对蓝牙设备总数：$bondedCount")
-            updateUiAndIdle("未检测到已连接耳机", "连上耳机后状态栏会自动显示电量", logBuilder.toString().trim())
+            logBuilder.append("已配对蓝牙设备总数：${bonded.size}")
+            updateUiAndIdle("未检测到已连接耳机", "连上耳机后自动显示电量", logBuilder.toString().trim())
         }
     }
 
@@ -269,7 +265,13 @@ class BatteryMonitorService : Service() {
 
     private fun getIconStyle(): Int {
         return getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            .getInt(KEY_ICON_STYLE, STYLE_BATTERY)
+            .getInt(KEY_ICON_STYLE, STYLE_BADGE)
+    }
+
+    private fun getLevelColor(level: Int): Int = when {
+        level <= 20 -> Color.parseColor("#EF4444") // 珊瑚红
+        level <= 45 -> Color.parseColor("#F59E0B") // 琥珀黄
+        else -> Color.parseColor("#10B981")        // 翠绿
     }
 
     private fun createBatteryIcon(level: Int): IconCompat {
@@ -277,67 +279,86 @@ class BatteryMonitorService : Service() {
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val iconStyle = getIconStyle()
+        val accent = getLevelColor(level)
         val text = level.toString()
 
         when (iconStyle) {
-            STYLE_BATTERY -> {
-                // 空心电池框 + 内部数字
-                val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.WHITE
-                    style = Paint.Style.STROKE
-                    strokeWidth = 6f
-                }
-                val bodyRect = RectF(6f, 18f, 82f, 78f)
-                canvas.drawRoundRect(bodyRect, 12f, 12f, strokePaint)
+            STYLE_RING -> {
+                // 环形仪表：浅底轨 + 彩色进度弧 + 居中数字
+                val pad = 10f
+                val oval = RectF(pad, pad, size - pad, size - pad)
 
-                val tipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.WHITE
-                    style = Paint.Style.FILL
+                val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb(65, Color.red(accent), Color.green(accent), Color.blue(accent))
+                    style = Paint.Style.STROKE
+                    strokeWidth = 9f
                 }
-                canvas.drawRoundRect(RectF(84f, 36f, 92f, 60f), 4f, 4f, tipPaint)
+                canvas.drawOval(oval, trackPaint)
+
+                val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = accent
+                    style = Paint.Style.STROKE
+                    strokeWidth = 9f
+                    strokeCap = Paint.Cap.ROUND
+                }
+                canvas.drawArc(oval, -90f, 360f * (level / 100f), false, arcPaint)
 
                 val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.WHITE
+                    color = accent
                     textAlign = Paint.Align.CENTER
                     typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    textSize = if (level == 100) 32f else 44f
+                    textSize = if (level == 100) 30f else 40f
+                }
+                val fm = textPaint.fontMetrics
+                val baseline = size / 2f - (fm.ascent + fm.descent) / 2f
+                canvas.drawText(text, size / 2f, baseline, textPaint)
+            }
+
+            STYLE_BATTERY -> {
+                // 彩色描边电池框 + 内部数字
+                val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = accent
+                    style = Paint.Style.STROKE
+                    strokeWidth = 7f
+                }
+                val bodyRect = RectF(6f, 18f, 82f, 78f)
+                canvas.drawRoundRect(bodyRect, 14f, 14f, strokePaint)
+
+                val tipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = accent
+                    style = Paint.Style.FILL
+                }
+                canvas.drawRoundRect(RectF(85f, 36f, 92f, 60f), 4f, 4f, tipPaint)
+
+                val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = accent
+                    textAlign = Paint.Align.CENTER
+                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    textSize = if (level == 100) 30f else 42f
                 }
                 val fm = textPaint.fontMetrics
                 val baseline = bodyRect.centerY() - (fm.ascent + fm.descent) / 2f
                 canvas.drawText(text, bodyRect.centerX(), baseline, textPaint)
             }
 
-            STYLE_PILL -> {
-                // 实心反白胶囊（数字透明镂空，状态栏上最清晰）
+            else -> {
+                // 默认：澎湃 OS 风格彩色圆角徽章 + 镂空粗体数字
                 val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.WHITE
+                    color = accent
                     style = Paint.Style.FILL
                 }
-                val pillRect = RectF(4f, 16f, 92f, 80f)
-                canvas.drawRoundRect(pillRect, 20f, 20f, bgPaint)
+                val badgeRect = RectF(6f, 6f, 90f, 90f)
+                canvas.drawRoundRect(badgeRect, 22f, 22f, bgPaint)
 
-                val clearPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                val cutoutPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
                     textAlign = Paint.Align.CENTER
                     typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
                     textSize = if (level == 100) 38f else 50f
                 }
-                val fm = clearPaint.fontMetrics
-                val baseline = pillRect.centerY() - (fm.ascent + fm.descent) / 2f
-                canvas.drawText(text, pillRect.centerX(), baseline, clearPaint)
-            }
-
-            else -> {
-                // 纯数字
-                val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    color = Color.WHITE
-                    textAlign = Paint.Align.CENTER
-                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    textSize = if (level == 100) 54f else 74f
-                }
-                val fm = textPaint.fontMetrics
-                val baseline = size / 2f - (fm.ascent + fm.descent) / 2f
-                canvas.drawText(text, size / 2f, baseline, textPaint)
+                val fm = cutoutPaint.fontMetrics
+                val baseline = badgeRect.centerY() - (fm.ascent + fm.descent) / 2f
+                canvas.drawText(text, badgeRect.centerX(), baseline, cutoutPaint)
             }
         }
         return IconCompat.createWithBitmap(bitmap)
@@ -353,10 +374,14 @@ class BatteryMonitorService : Service() {
     }
 
     private fun updateConnectedNotification(deviceName: String, level: Int) {
+        val levelColor = getLevelColor(level)
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(createBatteryIcon(level))
-            .setContentTitle("$deviceName · 电量 $level%")
-            .setContentText("点击打开耳机电量面板")
+            .setColor(levelColor)
+            .setContentTitle("耳机电量 $level%")
+            .setContentText(deviceName)
+            .setProgress(100, level, false)
+            .setShowWhen(false)
             .setContentIntent(contentIntent())
             .setOngoing(true)
             .setSilent(true)
@@ -368,8 +393,9 @@ class BatteryMonitorService : Service() {
     private fun showIdleNotification(title: String = "等待耳机连接") {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_headset)
+            .setColor(Color.parseColor("#3B82F6"))
             .setContentTitle(title)
-            .setContentText("连接蓝牙耳机后自动显示电量")
+            .setShowWhen(false)
             .setContentIntent(contentIntent())
             .setOngoing(true)
             .setSilent(true)
@@ -389,7 +415,7 @@ class BatteryMonitorService : Service() {
     private fun createNotificationChannel() {
         val channel = NotificationChannel(CHANNEL_ID, "耳机电量常驻显示", NotificationManager.IMPORTANCE_LOW).apply {
             setShowBadge(false)
-            description = "在状态栏实时显示已连接蓝牙耳机的电量百分比"
+            description = "实时显示已连接蓝牙耳机的电量百分比"
         }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
